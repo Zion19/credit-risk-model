@@ -1,0 +1,33 @@
+name: CI # The name of this workflow, shown in the GitHub Actions tab
+
+on: # Defines the events that trigger this workflow
+  push: # Run the workflow whenever code is pushed
+    branches: [main] # Only trigger on pushes to the 'main' branch
+  pull_request: # Also run the workflow when a pull request is opened or updated
+    branches: [main] # Only trigger on pull requests targeting the 'main' branch
+
+jobs: # A workflow is made up of one or more jobs
+  build-and-test: # The name of this job (build the environment and run tests)
+    runs-on: ubuntu-latest # Use the latest Ubuntu virtual machine as the runner
+
+    steps: # A job consists of a sequence of steps executed in order
+
+      # Step 1: Download the repository code onto the runner
+      - uses: actions/checkout@v4 # Official GitHub Action to check out your repo code
+
+      # Step 2: Install and configure the correct Python version
+      - uses: actions/setup-python@v5 # Official GitHub Action to set up Python
+        with: # Pass input parameters to the action
+          python-version: "3.12" # Use Python version 3.12
+
+      # Step 3: Confirm which Python version is active (useful for debugging)
+      - run: python --version # Print the Python version to the workflow logs
+
+      # Step 4: Install all required Python libraries listed in requirements.txt
+      - run: pip install -r requirements.txt # Install project dependencies
+
+      # Step 5: Lint the code to check for style issues and syntax errors
+      - run: flake8 src/ tests/ --max-line-length=88 # Run flake8 on src/ and tests/; allow lines up to 88 chars
+
+      # Step 6: Run the automated test suite to verify the code works correctly
+      - run: pytest tests/ -v --tb=short # Run pytest with verbose output (-v) and short error tracebacks (--tb=short)
