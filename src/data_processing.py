@@ -577,3 +577,133 @@ def run_pipeline(raw_filepath: str, output_dir: str, use_woe: bool = False) -> D
 
 
 
+
+
+# RFM metrics
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+
+
+def create_rfm_features(df, customer_col="CustomerId",
+                        date_col="TransactionDate",
+                        amount_col="TransactionAmount",
+                        snapshot_date=None):
+    """
+    Compute RFM features per customer.
+    """
+
+    df = df.copy()
+
+    # Ensure datetime
+    df[date_col] = pd.to_datetime(df[date_col])
+
+    # Define snapshot date (if not provided, use max transaction date + 1 day)
+    if snapshot_date is None:
+        snapshot_date = df[date_col].max() + pd.Timedelta(days=1)
+    else:
+        snapshot_date = pd.to_datetime(snapshot_date)
+
+    rfm = df.groupby(customer_col).agg(
+        Recency=(date_col, lambda x: (snapshot_date - x.max()).days),
+        Frequency=(date_col, "count"),
+        Monetary=(amount_col, "sum")
+    ).reset_index()
+
+    return rfm
+
+
+def cluster_customers_rfm(rfm, n_clusters=3, random_state=42):
+    """
+    Scale RFM and apply KMeans clustering.
+    """
+
+    features = ["Recency", "Frequency", "Monetary"]
+    X = rfm[features].copy()
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+    rfm["cluster"] = kmeans.fit_predict(X_scaled)
+
+    return rfm, scaler, kmeans
+
+
+def identify_high_risk_cluster(rfm):
+    """
+    Identify cluster with highest Recency and lowest Frequency/Monetary.
+    """
+
+    cluster_summary = rfm.groupby("cluster")[["Recency", "Frequency", "Monetary"]].mean()
+
+    # High risk = high recency + low frequency + low monetary
+    cluster_scores = (
+        cluster_summary["Recency"]
+        - cluster_summary["Frequency"]
+        - cluster_summary["Monetary"]
+    )
+
+    high_risk_cluster = cluster_scores.idxmax()
+
+    return high_risk_cluster
+
+
+def add_high_risk_label(df, rfm, high_risk_cluster, customer_col="CustomerId"):
+    """
+    Merge cluster labels and create binary target.
+    """
+
+    rfm["is_high_risk"] = (rfm["cluster"] == high_risk_cluster).astype(int)
+
+    df_out = df.merge(
+        rfm[[customer_col, "is_high_risk"]],
+        on=customer_col,
+        how="left"
+    )
+
+    return df_out
+
+
+def build_rfm_pipeline(df,
+                       customer_col="CustomerId",
+                       date_col="TransactionDate",
+                       amount_col="TransactionAmount",
+                       snapshot_date=None,
+                       n_clusters=3,
+                       random_state=42):
+    """
+    Full pipeline: RFM -> clustering -> high-risk labeling -> merge back.
+    """
+
+    rfm = create_rfm_features(
+        df,
+        customer_col=customer_col,
+        date_col=date_col,
+        amount_col=amount_col,
+        snapshot_date=snapshot_date
+    )
+
+    rfm, scaler, kmeans = cluster_customers_rfm(
+        rfm,
+        n_clusters=n_clusters,
+        random_state=random_state
+    )
+
+    high_risk_cluster = identify_high_risk_cluster(rfm)
+
+    df_out = add_high_risk_label(df, rfm, high_risk_cluster, customer_col)
+
+    return df_out, rfm, scaler, kmeans, high_risk_cluster
+
+
+if __name__ == "__main__":
+    # Example usage (update path as needed)
+    df = pd.read_csv("data/transactions.csv")
+
+    processed_df, rfm_table, scaler, model, high_risk_cluster = build_rfm_pipeline(df)
+
+    processed_df.to_csv("data/processed_dataset.csv", index=False)
+
+    print("High-risk cluster:", high_risk_cluster)
+    print("Saved processed dataset with is_high_risk column.")
